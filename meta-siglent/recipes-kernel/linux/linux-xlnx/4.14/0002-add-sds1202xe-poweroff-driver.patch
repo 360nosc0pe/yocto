@@ -1,0 +1,156 @@
+commit 94b519b00d20e4b9f5effadcfc34cd88b7f331a4
+Author: Andreas Galauner <andreas@galauner.de>
+Date:   Sun Feb 18 19:50:35 2018 +0100
+
+    Add SDS1202X-E poweroff driver
+
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index ca0de1a78e85..812a5afc30c0 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -227,5 +227,11 @@ config SYSCON_REBOOT_MODE
+ 	  register, then the bootloader can read it to take different
+ 	  action according to the mode.
+ 
++config POWER_RESET_SDS1202XE
++	bool "Siglent SDS1202X-E power-off driver"
++	depends on OF_GPIO
++	help
++	  Reboot support for the Siglent SDS1202X-E oscilloscope.
++
+ endif
+ 
+diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
+index aeb65edb17b7..ab010842294f 100644
+--- a/drivers/power/reset/Makefile
++++ b/drivers/power/reset/Makefile
+@@ -27,3 +27,4 @@ obj-$(CONFIG_POWER_RESET_RMOBILE) += rmobile-reset.o
+ obj-$(CONFIG_POWER_RESET_ZX) += zx-reboot.o
+ obj-$(CONFIG_REBOOT_MODE) += reboot-mode.o
+ obj-$(CONFIG_SYSCON_REBOOT_MODE) += syscon-reboot-mode.o
++obj-$(CONFIG_POWER_RESET_SDS1202XE) += sds1202xe-poweroff.o
+diff --git a/drivers/power/reset/sds1202xe-poweroff.c b/drivers/power/reset/sds1202xe-poweroff.c
+new file mode 100644
+index 000000000000..1d3c5c235418
+--- /dev/null
++++ b/drivers/power/reset/sds1202xe-poweroff.c
+@@ -0,0 +1,119 @@
++/*
++ * Implements the poweroff sequencing with the PMIC on the Siglent SDS1202X-E
++ *
++ * Andreas Galauner <andreas@galauner.de>
++ *
++ * Copyright (C) 2017 Andreas Galauner
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/delay.h>
++#include <linux/platform_device.h>
++#include <linux/gpio/consumer.h>
++#include <linux/of_platform.h>
++#include <linux/module.h>
++#include <linux/reboot.h>
++
++/*
++ * Hold configuration here, cannot be more than one instance of the driver
++ * since pm_power_off itself is global.
++ */
++static struct gpio_desc *pwrbtn_pmic_press_gpio;
++static struct gpio_desc *pwrbtn_pmic_inhibit_gpio;
++
++static int sds1202xe_poweroff_reboot_notifier(struct notifier_block *nb,
++                                              unsigned long action, void *unused)
++{
++    /* If the reason is a halt, clear the power button
++       inhibit GPIO to be able to turn off the device again */
++
++    if (action == SYS_HALT && pwrbtn_pmic_inhibit_gpio)
++        gpiod_set_value(pwrbtn_pmic_inhibit_gpio, 0);
++
++    return NOTIFY_DONE;
++}
++
++static struct notifier_block sds1202xe_poweroff_reboot_nb = {
++    .notifier_call = sds1202xe_poweroff_reboot_notifier,
++};
++
++static void sds1202xe_poweroff_do_poweroff(void)
++{
++    BUG_ON(!pwrbtn_pmic_press_gpio || !pwrbtn_pmic_inhibit_gpio);
++
++    /* Release inhibit, make the PMIC see us pulling the button low */
++    gpiod_set_value(pwrbtn_pmic_inhibit_gpio, 0);
++
++    /* Push the power button - PMIC should turn off the power now */
++    gpiod_set_value(pwrbtn_pmic_press_gpio, 1);
++
++    /* give it some time */
++    mdelay(3000);
++
++    WARN_ON(1);
++}
++
++static int sds1202xe_poweroff_probe(struct platform_device *pdev)
++{
++    /* If a pm_power_off function has already been added, leave it alone */
++    if (pm_power_off != NULL) {
++        dev_err(&pdev->dev,
++            "%s: pm_power_off function already registered",
++               __func__);
++        return -EBUSY;
++    }
++
++    pwrbtn_pmic_press_gpio = devm_gpiod_get_index(&pdev->dev, NULL, 0, GPIOD_OUT_LOW);
++    if (IS_ERR(pwrbtn_pmic_press_gpio))
++        return PTR_ERR(pwrbtn_pmic_press_gpio);
++
++    /* Assert inhibit Pin so PMIC doesn't turn us off when pressing the button */
++    pwrbtn_pmic_inhibit_gpio = devm_gpiod_get_index(&pdev->dev, NULL, 1, GPIOD_OUT_HIGH);
++    if (IS_ERR(pwrbtn_pmic_inhibit_gpio))
++        return PTR_ERR(pwrbtn_pmic_inhibit_gpio);
++
++    register_reboot_notifier(&sds1202xe_poweroff_reboot_nb);
++
++    pm_power_off = &sds1202xe_poweroff_do_poweroff;
++
++    return 0;
++}
++
++static int sds1202xe_poweroff_remove(struct platform_device *pdev)
++{
++    if (pm_power_off == &sds1202xe_poweroff_do_poweroff)
++        pm_power_off = NULL;
++
++    unregister_reboot_notifier(&sds1202xe_poweroff_reboot_nb);
++
++    /* Clear PMIC button inhibit */
++    if (pwrbtn_pmic_inhibit_gpio)
++        gpiod_set_value(pwrbtn_pmic_inhibit_gpio, 0);
++
++    return 0;
++}
++
++static const struct of_device_id of_sds1202xe_poweroff_match[] = {
++    { .compatible = "siglent,sds1202xe-poweroff", },
++    {},
++};
++
++static struct platform_driver sds1202xe_poweroff_driver = {
++    .probe = sds1202xe_poweroff_probe,
++    .remove = sds1202xe_poweroff_remove,
++    .driver = {
++        .name = "sds1202xe-poweroff",
++        .of_match_table = of_sds1202xe_poweroff_match,
++    },
++};
++
++module_platform_driver(sds1202xe_poweroff_driver);
++
++MODULE_AUTHOR("Andreas Galauner <andreas@galauner.de>");
++MODULE_DESCRIPTION("Siglent SDS1202X-E poweroff driver");
++MODULE_LICENSE("GPL v2");

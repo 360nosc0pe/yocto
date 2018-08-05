@@ -1,0 +1,4 @@
+define KFEATURE_DESCRIPTION "Drivers/Support for DMA peripherals"
+define KFEATURE_COMPATIBILITY board
+
+kconfig hardware dma.cfg

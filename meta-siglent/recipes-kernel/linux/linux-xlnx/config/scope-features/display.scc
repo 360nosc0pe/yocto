@@ -1,0 +1,4 @@
+define KFEATURE_DESCRIPTION "Drivers/Support for display peripherals"
+define KFEATURE_COMPATIBILITY board
+
+kconfig hardware display.cfg

@@ -1,0 +1,272 @@
+diff --git a/drivers/leds/Kconfig b/drivers/leds/Kconfig
+index 7a628c6516f6..2b515efa6942 100644
+--- a/drivers/leds/Kconfig
++++ b/drivers/leds/Kconfig
+@@ -659,6 +659,14 @@ config LEDS_MLXCPLD
+ 	  This option enabled support for the LEDs on the Mellanox
+ 	  boards. Say Y to enabled these.
+ 
++config LEDS_SDS1000XE
++	tristate "Frontpanel LED Support for Siglent SDS1000X-E series oscilloscopes"
++	depends on LEDS_CLASS
++	depends on SPI
++	help
++	  This option enables support for the LEDs on the frontpanel of
++	  the Siglent SDS1000X-E series oscilloscopes.
++
+ comment "LED Triggers"
+ source "drivers/leds/trigger/Kconfig"
+ 
+diff --git a/drivers/leds/Makefile b/drivers/leds/Makefile
+index 3965070190f5..26644ea87e9a 100644
+--- a/drivers/leds/Makefile
++++ b/drivers/leds/Makefile
+@@ -74,6 +74,7 @@ obj-$(CONFIG_LEDS_MLXCPLD)		+= leds-mlxcpld.o
+ 
+ # LED SPI Drivers
+ obj-$(CONFIG_LEDS_DAC124S085)		+= leds-dac124s085.o
++obj-$(CONFIG_LEDS_SDS1000XE)		+= leds-sds1000xe-frontpanel.o
+ 
+ # LED Triggers
+ obj-$(CONFIG_LEDS_TRIGGERS)		+= trigger/
+diff --git a/drivers/leds/leds-sds1000xe-frontpanel.c b/drivers/leds/leds-sds1000xe-frontpanel.c
+new file mode 100644
+index 000000000000..086b57c697d6
+--- /dev/null
++++ b/drivers/leds/leds-sds1000xe-frontpanel.c
+@@ -0,0 +1,235 @@
++/*
++ * Implements a driver for the LEDs on the frontpanel of the Siglent SDS1000X-E series oscilloscopes
++ *
++ * Andreas Galauner <andreas@galauner.de>
++ *
++ * Copyright (C) 2017 Andreas Galauner
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#include <linux/leds.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/gpio/consumer.h>
++
++struct sds_led_def {
++    const char* name;
++    uint8_t bit;
++};
++
++struct sds_led_def frontpanel_leds_sds1202xe[] = {
++    {"frontpanel:encoder",         0},
++    {"frontpanel:roll",            8},
++    {"frontpanel:history",         9},
++    {"frontpanel:math",            10},
++    {"frontpanel:decode",          11},
++    {"frontpanel:cursors",         12},
++    {"frontpanel:ref",             13},
++    {"frontpanel:measure",         15},
++    {"frontpanel:channel1",        16},
++    {"frontpanel:auto",            17},
++    {"frontpanel:channel2",        18},
++    {"frontpanel:normal",          19},
++    {"frontpanel:runstop:green",   20},
++    {"frontpanel:runstop:red",     21},
++    {"frontpanel:single",          22},
++    {"frontpanel:display",         23},
++};
++
++struct sds_led_def frontpanel_leds_sds1104xe[] = {
++    {"frontpanel:single",          0},
++    {"frontpanel:runstop:green",   1},
++    {"frontpanel:runstop:red",     2},
++    {"frontpanel:math",            8},
++    {"frontpanel:ref",             9},
++    {"frontpanel:roll",            10},
++    {"frontpanel:search",          11},
++    {"frontpanel:decode",          12},
++    {"frontpanel:history",         13},
++    {"frontpanel:auto",            14},
++    {"frontpanel:normal",          15},
++    {"frontpanel:encoder",         16},
++    {"frontpanel:channel1",        17},
++    {"frontpanel:channel2",        18},
++    {"frontpanel:channel3",        19},
++    {"frontpanel:channel4",        20},
++    {"frontpanel:digital",         21},
++    {"frontpanel:cursors",         22},
++    {"frontpanel:measure",         23},
++};
++
++
++struct sds_leds {
++    size_t num_leds;
++    struct sds_led_def* leds;
++};
++
++struct sds_leds leds_sds1202xe = {
++    .leds = frontpanel_leds_sds1202xe,
++    .num_leds = ARRAY_SIZE(frontpanel_leds_sds1202xe)
++};
++
++struct sds_leds leds_sds1104xe = {
++    .leds = frontpanel_leds_sds1104xe,
++    .num_leds = ARRAY_SIZE(frontpanel_leds_sds1104xe)
++};
++
++
++struct sds1000xe_fp_led_instance {
++    struct spi_device   *spi;
++    struct led_classdev cdev;
++    uint32_t            mask;
++};
++
++struct sds1000xe_fp_leds {
++    uint32_t            cur_state;
++    struct mutex        mutex;
++    struct gpio_desc    *gpio_output_enable;
++    struct sds_leds     *led_definition;
++    struct sds1000xe_fp_led_instance leds[0];
++};
++
++static void fp_led_set(struct led_classdev *cdev,
++                       enum led_brightness b)
++{
++    struct sds1000xe_fp_led_instance *led = container_of(cdev,
++            struct sds1000xe_fp_led_instance, cdev);
++    struct sds1000xe_fp_leds *fp_leds = spi_get_drvdata(led->spi);
++    uint8_t data[3];
++
++    mutex_lock(&fp_leds->mutex);
++
++    if (b != LED_OFF)
++        fp_leds->cur_state |= led->mask;
++    else
++        fp_leds->cur_state &= ~led->mask;
++
++    data[0] = fp_leds->cur_state & 0xFF;
++    data[1] = (fp_leds->cur_state >> 8) & 0xFF;
++    data[2] = (fp_leds->cur_state >> 16) & 0xFF;
++    spi_write(led->spi, data, sizeof(data));
++
++    mutex_unlock(&fp_leds->mutex);
++}
++
++static enum led_brightness fp_led_get(struct led_classdev *cdev)
++{
++    struct sds1000xe_fp_led_instance *led = container_of(cdev,
++            struct sds1000xe_fp_led_instance, cdev);
++    struct sds1000xe_fp_leds *fp_leds = spi_get_drvdata(led->spi);
++
++    return (fp_leds->cur_state & led->mask) ? LED_FULL : LED_OFF;
++}
++
++static int sds1000xe_frontpanel_leds_probe(struct spi_device *spi)
++{
++    struct sds1000xe_fp_leds *fp_leds;
++    const struct spi_device_id *spi_id;
++    struct sds_leds *led_definition;
++    int i;
++    uint32_t zero = 0;
++
++    spi_id = spi_get_device_id(spi);
++    led_definition = (struct sds_leds *)spi_id->driver_data;
++
++    fp_leds = devm_kzalloc(&spi->dev,
++        sizeof(*fp_leds)
++        + sizeof(struct sds1000xe_fp_led_instance) * led_definition->num_leds,
++        GFP_KERNEL);
++
++    if (!fp_leds)
++        return -ENOMEM;
++
++    fp_leds->led_definition = led_definition;
++
++    /* Tie output enable on the shift registers to low */
++    fp_leds->gpio_output_enable = devm_gpiod_get_optional(&spi->dev, NULL, GPIOD_OUT_HIGH);
++
++    mutex_init(&fp_leds->mutex);
++    spi_set_drvdata(spi, fp_leds);
++
++    //clear all LEDs
++    spi_write(spi, &zero, 3);
++
++    for (i = 0; i < led_definition->num_leds; i++) {
++        struct sds1000xe_fp_led_instance *led;
++        led = &fp_leds->leds[i];
++
++        led->spi = spi;
++        led->cdev.name = led_definition->leds[i].name;
++        led->cdev.brightness_set = fp_led_set;
++        led->cdev.brightness_get = fp_led_get;
++        led->mask = 1 << led_definition->leds[i].bit;
++
++        if (led_classdev_register(NULL, &led->cdev) < 0) {
++            kfree(led);
++            break;
++        }
++    }
++
++    return 0;
++}
++
++static int sds1000xe_frontpanel_leds_remove(struct spi_device *spi)
++{
++    struct sds1000xe_fp_leds *fp_leds = spi_get_drvdata(spi);
++    int i;
++
++    /* Disable all LEDs using output enable on the shift registers */
++    if (fp_leds->gpio_output_enable)
++        gpiod_set_value(fp_leds->gpio_output_enable, 1);
++
++    for (i = 0; i < fp_leds->led_definition->num_leds; i++)
++       led_classdev_unregister(&fp_leds->leds[i].cdev);
++
++    return 0;
++}
++
++static const struct spi_device_id sds1000xe_frontpanel_leds_id[] = {
++    { .name = "sds1202xe-frontpanel-leds", .driver_data = (kernel_ulong_t)&leds_sds1202xe },
++    { .name = "sds1104xe-frontpanel-leds", .driver_data = (kernel_ulong_t)&leds_sds1104xe },
++    { /* Sentinel */ },
++};
++MODULE_DEVICE_TABLE(spi, sds1000xe_frontpanel_leds_id);
++
++static const struct of_device_id sds1000xe_frontpanel_leds_match[] = {
++    { .compatible = "siglent,sds1202xe-frontpanel-leds", },
++    { .compatible = "siglent,sds1104xe-frontpanel-leds", },
++    { /* Sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, sds1000xe_frontpanel_leds_match);
++
++static struct spi_driver sds1202xe_frontpanel_leds_driver = {
++    .driver = {
++       .name = "sds1000xe-frontpanel-leds",
++       .bus = &spi_bus_type,
++       .owner = THIS_MODULE,
++       .of_match_table = sds1000xe_frontpanel_leds_match,
++    },
++    .probe = sds1000xe_frontpanel_leds_probe,
++    .remove = sds1000xe_frontpanel_leds_remove,
++    .id_table = sds1000xe_frontpanel_leds_id,
++};
++
++static int __init sds1000xe_frontpanel_leds_init(void)
++{
++    return spi_register_driver(&sds1202xe_frontpanel_leds_driver);
++}
++
++static void __exit sds1000xe_frontpanel_leds_exit(void)
++{
++    spi_unregister_driver(&sds1202xe_frontpanel_leds_driver);
++}
++
++module_init(sds1000xe_frontpanel_leds_init);
++module_exit(sds1000xe_frontpanel_leds_exit);
++
++MODULE_AUTHOR("Andreas Galauner <andreas@galauner.de>");
++MODULE_DESCRIPTION("Siglent SDS1000X-E series frontpanel LED driver");
++MODULE_LICENSE("GPL v2");

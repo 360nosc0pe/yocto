@@ -1,0 +1,7 @@
+[submodule "poky"]
+	path = poky
+	url = https://git.yoctoproject.org/git/poky
+	branch = sumo
+[submodule "meta-xilinx"]
+	path = meta-xilinx
+	url = https://github.com/Xilinx/meta-xilinx.git

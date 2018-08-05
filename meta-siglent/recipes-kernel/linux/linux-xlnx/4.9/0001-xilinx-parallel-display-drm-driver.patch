@@ -1,0 +1,210 @@
+diff --git a/drivers/gpu/drm/xilinx/Kconfig b/drivers/gpu/drm/xilinx/Kconfig
+index 57e18a9d774d..fe4246cdcbdf 100644
+--- a/drivers/gpu/drm/xilinx/Kconfig
++++ b/drivers/gpu/drm/xilinx/Kconfig
+@@ -57,3 +57,10 @@ config DRM_XILINX_SDI
+ 	depends on DRM_XILINX
+ 	help
+ 	  DRM driver for Xilinx SDI Tx Subsystem.
++
++config DRM_XILINX_PARALLEL_DISPLAY
++	tristate "DRM slave encoder for Video-out on fixed parallel displays"
++	depends on DRM_XILINX
++	select DRM_PANEL
++	help
++	  DRM slave encoder for Video-out on fixed parallel displays
+diff --git a/drivers/gpu/drm/xilinx/Makefile b/drivers/gpu/drm/xilinx/Makefile
+index 19bc1541ca17..4496f2b62243 100644
+--- a/drivers/gpu/drm/xilinx/Makefile
++++ b/drivers/gpu/drm/xilinx/Makefile
+@@ -12,3 +12,4 @@ obj-$(CONFIG_DRM_XILINX_DP) += xilinx_drm_dp.o
+ obj-$(CONFIG_DRM_XILINX_DP_SUB) += xilinx_drm_dp_sub.o
+ obj-$(CONFIG_DRM_XILINX_MIPI_DSI) += xilinx_drm_dsi.o
+ obj-$(CONFIG_DRM_XILINX_SDI) += xilinx_drm_sdi.o
++obj-$(CONFIG_DRM_XILINX_PARALLEL_DISPLAY) += xilinx_parallel_display.o
+diff --git a/drivers/gpu/drm/xilinx/xilinx_parallel_display.c b/drivers/gpu/drm/xilinx/xilinx_parallel_display.c
+new file mode 100644
+index 000000000000..9bb558d3d813
+--- /dev/null
++++ b/drivers/gpu/drm/xilinx/xilinx_parallel_display.c
+@@ -0,0 +1,180 @@
++#include <drm/drmP.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_encoder_slave.h>
++
++#include <linux/device.h>
++#include <linux/module.h>
++#include <linux/err.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/platform_device.h>
++
++struct xilinx_parallel_display {
++    struct drm_encoder *encoder;
++    struct drm_panel *panel;
++};
++
++static inline struct xilinx_parallel_display *to_xilinx_parallel_display(
++                    struct drm_encoder *encoder)
++{
++    return to_encoder_slave(encoder)->slave_priv;
++}
++
++static bool xilinx_parallel_display_mode_fixup(struct drm_encoder *encoder,
++                const struct drm_display_mode *mode,
++                struct drm_display_mode *adjusted_mode)
++{
++    return true;
++}
++
++static void xilinx_parallel_display_mode_set(struct drm_encoder *encoder,
++                struct drm_display_mode *mode,
++                struct drm_display_mode *adjusted_mode)
++{
++}
++
++static void
++xilinx_parallel_display_dpms(struct drm_encoder *encoder, int mode)
++{
++    struct xilinx_parallel_display *display = to_xilinx_parallel_display(encoder);
++
++    switch (mode) {
++    case DRM_MODE_DPMS_ON:
++        drm_panel_prepare(display->panel);
++        drm_panel_enable(display->panel);
++        break;
++
++    default:
++        drm_panel_disable(display->panel);
++        drm_panel_unprepare(display->panel);
++        break;
++    }
++}
++
++static void xilinx_parallel_display_save(struct drm_encoder *encoder)
++{
++}
++
++static void xilinx_parallel_display_restore(struct drm_encoder *encoder)
++{
++}
++
++static int xilinx_parallel_display_mode_valid(struct drm_encoder *encoder,
++                struct drm_display_mode *mode)
++{
++    //FIXME: check mode?
++    return MODE_OK;
++}
++
++static int xilinx_parallel_display_get_modes(struct drm_encoder *encoder,
++                struct drm_connector *connector)
++{
++    struct xilinx_parallel_display *display = to_xilinx_parallel_display(encoder);
++
++    drm_panel_get_modes(display->panel);
++
++    return 0;
++}
++
++static enum drm_connector_status xilinx_parallel_display_detect(
++                    struct drm_encoder *encoder,
++                    struct drm_connector *connector)
++{
++    struct xilinx_parallel_display *display = to_xilinx_parallel_display(encoder);
++
++    drm_panel_attach(display->panel, connector);
++    return connector_status_connected;
++}
++
++static struct drm_encoder_slave_funcs xilinx_parallel_display_slave_funcs = {
++    .dpms           = xilinx_parallel_display_dpms,
++    .save           = xilinx_parallel_display_save,
++    .restore        = xilinx_parallel_display_restore,
++    .mode_fixup     = xilinx_parallel_display_mode_fixup,
++    .mode_valid     = xilinx_parallel_display_mode_valid,
++    .mode_set       = xilinx_parallel_display_mode_set,
++    .detect         = xilinx_parallel_display_detect,
++    .get_modes      = xilinx_parallel_display_get_modes,
++};
++
++static int xilinx_parallel_display_init(struct platform_device *pdev,
++                struct drm_device *dev,
++                struct drm_encoder_slave *encoder)
++{
++    struct xilinx_parallel_display *display = platform_get_drvdata(pdev);
++    struct device_node *sub_node;
++
++    encoder->slave_priv = display;
++    encoder->slave_funcs = &xilinx_parallel_display_slave_funcs;
++
++    display->encoder = &encoder->base;
++
++    /* get the attached panel */
++    sub_node = of_parse_phandle(pdev->dev.of_node, "panel", 0);
++    if(!sub_node) {
++        DRM_ERROR("failed to get panel device tree node\n");
++        return -EINVAL;
++    }
++
++    display->panel = of_drm_find_panel(sub_node);
++    of_node_put(sub_node);
++    if (!display->panel)
++        return -EPROBE_DEFER;
++
++    return 0;
++}
++
++static int xilinx_parallel_display_probe(struct platform_device *pdev)
++{
++    struct xilinx_parallel_display *display;
++
++    display = devm_kzalloc(&pdev->dev, sizeof(*display), GFP_KERNEL);
++    if (!display)
++        return -ENOMEM;
++
++    platform_set_drvdata(pdev, display);
++
++    return 0;
++}
++
++static int xilinx_parallel_display_remove(struct platform_device *pdev)
++{
++    return 0;
++}
++
++static const struct of_device_id xilinx_parallel_display_of_match[] = {
++    { .compatible = "xlnx,parallel-display", },
++    { /* end of table */ },
++};
++MODULE_DEVICE_TABLE(of, xilinx_parallel_display_of_match);
++
++static struct drm_platform_encoder_driver parallel_display_driver = {
++    .platform_driver = {
++        .probe          = xilinx_parallel_display_probe,
++        .remove         = xilinx_parallel_display_remove,
++        .driver         = {
++            .owner      = THIS_MODULE,
++            .name       = "xilinx-parallel-display",
++            .of_match_table = xilinx_parallel_display_of_match,
++        },
++    },
++
++    .encoder_init = xilinx_parallel_display_init,
++};
++
++static int __init parallel_display_encoder_init(void)
++{
++    return platform_driver_register(&parallel_display_driver.platform_driver);
++}
++
++static void __exit parallel_display_encoder_exit(void)
++{
++    platform_driver_unregister(&parallel_display_driver.platform_driver);
++}
++
++module_init(parallel_display_encoder_init);
++module_exit(parallel_display_encoder_exit);
++
++MODULE_AUTHOR("Andreas Galauner <andreas@galauner.de>");
++MODULE_DESCRIPTION("DRM slave encoder for Video-out on fixed parallel displays");
++MODULE_LICENSE("GPL v2");

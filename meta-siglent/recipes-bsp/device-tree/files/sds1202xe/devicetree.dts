@@ -1,0 +1,316 @@
+/dts-v1/;
+/include/ "zynq-7000.dtsi"
+
+/ {
+    model = "Siglent SDS1202X-E";
+    compatible = "xlnx,zynq-sds1202xe", "xlnx,zynq-7000";
+
+    aliases {
+        ethernet0 = &gem0;
+        serial0 = &uart1;
+    };
+
+    memory {
+        device_type = "memory";
+        reg = <0x0 0x8000000>;
+    };
+
+    chosen {
+        bootargs = "console=ttyPS0,115200 earlycon root=/dev/nfs rw nfsroot=192.168.0.1:/nfsroot,v3,tcp ip=dhcp";
+        stdout-path = "serial0:115200n8";
+    };
+
+    usb_phy0: phy0 {
+        compatible = "usb-nop-xceiv";
+        #phy-cells = <0>;
+        reset-gpios = <&gpio0 52 1>;
+        vbus-regulator = <&reg_usb_vbus>;
+        //FIXME: overcurrent detection?
+    };
+
+    reg_usb_vbus: usb-vbus {
+        compatible = "regulator-fixed";
+        regulator-name = "usb-vbus";
+        regulator-min-microvolt = <5000000>;
+        regulator-max-microvolt = <5000000>;
+        gpio = <&gpio0 54 0>; //EMIO GPIO 0
+    };
+
+    usb_phy1: phy1 {
+        compatible = "usb-nop-xceiv";
+        #phy-cells = <0>;
+        reset-gpios = <&gpio0 53 1>;
+    };
+
+    leds {
+        compatible = "gpio-leds";
+        led {
+            label = "led";
+            gpios = <&gpio0 23 1>;
+            linux,default-trigger = "heartbeat";
+        };
+    };
+
+    gpio-keys {
+        compatible = "gpio-keys";
+
+        power {
+            label = "power key";
+            gpios = <&gpio0 17 1>;
+            linux,code = <116>; /* KEY_POWER */
+            debounce-interval = <10>;
+        };
+    };
+
+    sds1202xe-poweroff {
+        compatible = "sds1202xe-poweroff";
+        /* MIO16 - trigger power button event on PMIC */
+        /* MIO18 - inhibit power button on PMIC */
+        gpios = <&gpio0 16 0>, <&gpio0 18 0>;
+    };
+
+    amba_pl {
+        #address-cells = <0x1>;
+        #size-cells = <0x1>;
+        compatible = "simple-bus";
+        ranges;
+
+        display_vdma: axivdma@80000000 {
+            #dma-cells = <1>;
+
+            compatible = "xlnx,axi-vdma-1.00.a";
+
+            interrupt-parent = <&intc>;
+            interrupts = <0 29 4>;
+
+            reg = <0x80000000 0x10000>;
+            dma-ranges = <0x00000000 0x00000000 0x40000000>;
+
+            xlnx,addrwidth = <32>;
+            xlnx,flush-fsync = <0x1>;
+            xlnx,num-fstores = <0x1>;
+
+            clocks = <&clkc 16>, <&clkc 17>, <&clkc 16>;
+            clock-names = "s_axi_lite_aclk", "m_axi_mm2s_aclk", "m_axis_mm2s_aclk";
+
+            dma-channel@80000000 {
+                compatible = "xlnx,axi-vdma-mm2s-channel";
+                interrupts = <0 29 4>;
+                xlnx,datawidth = <64>;
+            };
+        };
+
+        display_pixel_clk: pixel-clock@0 {
+            compatible = "fixed-clock";
+            #clock-cells = <0>;
+            clock-frequency = <33333000>;
+        };
+
+        xilinx_drm {
+            compatible = "xlnx,drm";
+
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            /*xlnx,vtc = <&v_tc_0>;*/
+            xlnx,encoder-slave = <&parallel_display>;
+            xlnx,connector-type = "HDMIA";
+            clocks = <&display_pixel_clk>;
+
+            planes {
+                xlnx,pixel-format = "rgb888";
+                plane0 {
+                    dmas = <&display_vdma 0>;
+                    dma-names = "display_vdma";
+                };
+            };
+        };
+
+        parallel_display: parallel-display {
+            compatible = "xlnx,parallel-display";
+            panel = <&panel>;
+        };
+
+        panel: simple-panel {
+            compatible = "innolux,at070tn92";
+            backlight = <&backlight>;
+        };
+
+        backlight: backlight {
+            compatible = "gpio-backlight";
+            /* EMIO GPIO 3 */
+            gpios = <&gpio0 56 0>; //EMIO GPIO 2
+            default-on;
+        };
+
+        lxwrap@83c00000 {
+            compatible = "siglent,lxwrap";
+            reg = <0x83c00000 0x10000>;
+        };
+    };
+};
+
+&amba {
+    ocm: sram@fffc0000 {
+        compatible = "mmio-sram";
+        reg = <0xfffc0000 0x10000>;
+    };
+};
+
+&clkc {
+    ps-clk-frequency = <33333333>;
+};
+
+&gem0 {
+    status = "okay";
+    phy-mode = "mii";
+    phy-handle = <&ethernet_phy>;
+
+    ethernet_phy: ethernet-phy@0x1e {
+        reg = <0x1e>;
+    };
+};
+
+&uart1 {
+    status = "okay";
+};
+
+&usb0 {
+    status = "okay";
+    dr_mode = "host";
+    usb-phy = <&usb_phy0>;
+    //pinctrl-names = "default";
+    //pinctrl-0 = <&pinctrl_usb0_default>;
+};
+
+&usb1 {
+    status = "okay";
+    dr_mode = "peripheral";
+    usb-phy = <&usb_phy1>;
+    //pinctrl-names = "default";
+    //pinctrl-0 = <&pinctrl_usb1_default>;
+};
+
+// Main Siglent SPI bus (PLL, ADC, ...).
+&spi0 {
+    status = "okay";
+
+    pll@0 {
+        compatible = "linux,spidev";
+        reg = <0x0>;
+        spi-max-frequency = <1000000>;
+    };
+};
+
+// Auxiliary bus to front panel.
+&spi1 {
+    status = "okay";
+
+    frontpanel_leds@0 {
+        compatible = "siglent,sds1202xe-frontpanel-leds";
+        reg = <0x0>;
+        spi-max-frequency = <5000000>;
+        gpios = <&gpio0 57 1>;  /* shift register output enable - EMIO GPIO 3 */
+    };
+};
+
+//FIXME: SDHCI0 is enabled in original device tree for whatever reason
+//&sdhci0 {
+//    status = "okay";
+//};
+
+&smcc {
+    status = "okay";
+};
+
+&nand0 {
+    status = "okay";
+
+    arm,nand-cycle-t0 = <0x5>;
+    arm,nand-cycle-t1 = <0x5>;
+    arm,nand-cycle-t2 = <0x2>;
+    arm,nand-cycle-t3 = <0x3>;
+    arm,nand-cycle-t4 = <0x1>;
+    arm,nand-cycle-t5 = <0x2>;
+    arm,nand-cycle-t6 = <0x2>;
+
+    partition@nand-fsbl {
+        label = "fsbl";
+        reg = <0x0 0x780000>;
+    };
+    partition@nand-linux {
+        label = "kerneldata";
+        reg = <0x780000 0x400000>;
+    };
+    partition@nand-device-tree {
+        label = "device-tree";
+        reg = <0xb80000 0x80000>;
+    };
+    partition@nand-manufacturedata {
+        label = "Manufacturedata";
+        reg = <0xc00000 0x500000>;
+    };
+    partition@nand-reserved1 {
+        label = "reserved1";
+        reg = <0x1100000 0x500000>;
+    };
+    partition@nand-rootfs {
+        label = "rootfs";
+        reg = <0x1600000 0x1e00000>;
+    };
+    partition@nand-firmdata0 {
+        label = "firmdata0";
+        reg = <0x3400000 0xa00000>;
+    };
+    partition@nand-firmdata1 {
+        label = "firmdata1";
+        reg = <0x3e00000 0xa00000>;
+    };
+    partition@nand-siglent {
+        label = "siglent";
+        reg = <0x4800000 0x1400000>;
+    };
+    partition@nand-datafs {
+        label = "datafs";
+        reg = <0x5c00000 0x6400000>;
+    };
+    partition@nand-log {
+        label = "log";
+        reg = <0xc000000 0xa00000>;
+    };
+    partition@nand-upgrade_cramdisk {
+        label = "upgrade_cramdisk";
+        reg = <0xca00000 0x1e00000>;
+    };
+    partition@nand-reserved2 {
+        label = "reserved2";
+        reg = <0xe800000 0x1800000>;
+    };
+};
+
+//FIXME: configure pinctrl correctly
+//&pinctrl0 {
+//    pinctrl_usb0_default: usb0-default {
+//        mux {
+//            groups = "usb0_0_grp";
+//            function = "usb0";
+//        };
+//
+//        conf {
+//            groups = "usb0_0_grp";
+//            slew-rate = <0>;
+//            io-standard = <1>;
+//        };
+//
+//        conf-rx {
+//            pins = "MIO29", "MIO31", "MIO36";
+//            bias-high-impedance;
+//        };
+//
+//        conf-tx {
+//            pins = "MIO28", "MIO30", "MIO32", "MIO33", "MIO34",
+//                   "MIO35", "MIO37", "MIO38", "MIO39";
+//            bias-disable;
+//        };
+//    };
+//};

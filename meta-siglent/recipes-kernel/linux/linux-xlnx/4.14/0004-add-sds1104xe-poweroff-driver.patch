@@ -1,0 +1,124 @@
+commit f353df7845641e93b42f60b97963ebbba55d4aa0
+Author: Andreas Galauner <andreas@galauner.de>
+Date:   Sun Feb 18 19:51:30 2018 +0100
+
+    Add SDS1104X-E poweroff driver
+
+diff --git a/drivers/power/reset/Kconfig b/drivers/power/reset/Kconfig
+index 812a5afc30c0..b26be209719c 100644
+--- a/drivers/power/reset/Kconfig
++++ b/drivers/power/reset/Kconfig
+@@ -233,5 +233,11 @@ config POWER_RESET_SDS1202XE
+ 	help
+ 	  Reboot support for the Siglent SDS1202X-E oscilloscope.
+ 
++config POWER_RESET_SDS1104XE
++	bool "Siglent SDS1104X-E power-off driver"
++	depends on I2C
++	help
++	  Reboot support for the Siglent SDS1104X-E oscilloscope.
++
+ endif
+ 
+diff --git a/drivers/power/reset/Makefile b/drivers/power/reset/Makefile
+index ab010842294f..cf45f9e1c706 100644
+--- a/drivers/power/reset/Makefile
++++ b/drivers/power/reset/Makefile
+@@ -28,3 +28,4 @@ obj-$(CONFIG_POWER_RESET_ZX) += zx-reboot.o
+ obj-$(CONFIG_REBOOT_MODE) += reboot-mode.o
+ obj-$(CONFIG_SYSCON_REBOOT_MODE) += syscon-reboot-mode.o
+ obj-$(CONFIG_POWER_RESET_SDS1202XE) += sds1202xe-poweroff.o
++obj-$(CONFIG_POWER_RESET_SDS1104XE) += sds1104xe-poweroff.o
+diff --git a/drivers/power/reset/sds1104xe-poweroff.c b/drivers/power/reset/sds1104xe-poweroff.c
+new file mode 100644
+index 000000000000..0bd478142553
+--- /dev/null
++++ b/drivers/power/reset/sds1104xe-poweroff.c
+@@ -0,0 +1,87 @@
++/*
++ * Implements the poweroff sequencing with the PMIC on the Siglent SDS1104X-E
++ *
++ * Andreas Galauner <andreas@galauner.de>
++ *
++ * Copyright (C) 2017 Andreas Galauner
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++#include <linux/module.h>
++#include <linux/i2c.h>
++#include <linux/delay.h>
++
++/*
++ * Hold configuration here, cannot be more than one instance of the driver
++ * since pm_power_off itself is global.
++ */
++static struct i2c_client *msp430_i2c_client;
++
++static void sds1104xe_poweroff_do_poweroff(void)
++{
++    BUG_ON(!msp430_i2c_client);
++
++    /* Send the PMIC the signal to turn off the power */
++    i2c_smbus_write_byte(msp430_i2c_client, 1);
++
++    /* give it some time */
++    mdelay(3000);
++
++    WARN_ON(1);
++}
++
++static int sds1104xe_poweroff_probe(struct i2c_client *client,
++        const struct i2c_device_id *did)
++{
++    /* If a pm_power_off function has already been added, leave it alone */
++    if (pm_power_off != NULL) {
++        dev_err(&client->dev,
++            "%s: pm_power_off function already registered",
++               __func__);
++        return -EBUSY;
++    }
++
++    msp430_i2c_client = client;
++    pm_power_off = &sds1104xe_poweroff_do_poweroff;
++
++    return 0;
++}
++
++static int sds1104xe_poweroff_remove(struct i2c_client *client)
++{
++    if (pm_power_off == &sds1104xe_poweroff_do_poweroff)
++        pm_power_off = NULL;
++
++    return 0;
++}
++
++static const struct of_device_id sds1104xe_poweroff_dt_ids[] = {
++    { .compatible = "siglent,sds1104xe-poweroff", .data = 0 },
++    { }
++};
++MODULE_DEVICE_TABLE(of, sds1104xe_poweroff_dt_ids);
++
++static const struct i2c_device_id sds1104xe_poweroff_id[] = {
++    { "sds1104xe-poweroff", 0 },
++    {},
++};
++MODULE_DEVICE_TABLE(i2c, of_sds1104xe_poweroff_match);
++
++static struct i2c_driver sds1104xe_poweroff_driver = {
++    .driver = {
++        .name = "sds1104xe-poweroff",
++        .of_match_table = sds1104xe_poweroff_dt_ids,
++    },
++    .probe = sds1104xe_poweroff_probe,
++    .remove = sds1104xe_poweroff_remove,
++    .id_table = sds1104xe_poweroff_id
++};
++
++module_i2c_driver(sds1104xe_poweroff_driver);
++
++MODULE_AUTHOR("Andreas Galauner <andreas@galauner.de>");
++MODULE_DESCRIPTION("Siglent SDS1104X-E poweroff driver");
++MODULE_LICENSE("GPL v2");

@@ -1,0 +1,346 @@
+commit 6b02eb00d3f1159d35c52c02c41a203fed518ba1
+Author: Andreas Galauner <andreas@galauner.de>
+Date:   Sat Feb 17 00:06:52 2018 +0100
+
+    Add SDS1202X-E support
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index a66cad3733..26f9292553 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -152,7 +152,8 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
+ 	zynq-zc770-xm013.dtb \
+ 	zynq-zed.dtb \
+ 	zynq-zturn-myir.dtb \
+-	zynq-zybo.dtb
++	zynq-zybo.dtb \
++	zynq-sds1202xe.dtb
+ dtb-$(CONFIG_ARCH_ZYNQMP) += \
+ 	zynqmp-mini.dtb				\
+ 	zynqmp-mini-qspi-parallel.dtb		\
+diff --git a/arch/arm/dts/zynq-sds1202xe.dts b/arch/arm/dts/zynq-sds1202xe.dts
+new file mode 100644
+index 0000000000..e5f1d21b32
+--- /dev/null
++++ b/arch/arm/dts/zynq-sds1202xe.dts
+@@ -0,0 +1,189 @@
++/dts-v1/;
++/include/ "zynq-7000.dtsi"
++
++/ {
++    model = "Siglent SDS1202X-E";
++    compatible = "xlnx,zynq-sds1202xe", "xlnx,zynq-7000";
++
++    aliases {
++        ethernet0 = &gem0;
++        serial0 = &uart1;
++    };
++
++    memory {
++        device_type = "memory";
++        reg = <0x0 0x8000000>;
++    };
++
++    chosen {
++        bootargs = "console=ttyPS0,115200 earlycon";
++        stdout-path = "serial0:115200n8";
++    };
++
++    usb_phy0: phy0 {
++        compatible = "usb-nop-xceiv";
++        #phy-cells = <0>;
++        reset-gpios = <&gpio0 52 1>;
++        //FIXME: add this and wire up the VBUS enable GPIO
++        //vbus-regulator = <&vbus_regulator>;
++        //FIXME: overcurrent detection?
++    };
++
++    usb_phy1: phy1 {
++        compatible = "usb-nop-xceiv";
++        #phy-cells = <0>;
++        reset-gpios = <&gpio0 53 1>;
++    };
++};
++
++&clkc {
++    ps-clk-frequency = <33333333>;
++};
++
++&gem0 {
++    status = "okay";
++    phy-mode = "mii";
++    phy-handle = <&ethernet_phy>;
++    xlnx,emio;
++
++    ethernet_phy: ethernet-phy@0x1e {
++    };
++};
++
++&uart1 {
++    status = "okay";
++    u-boot,dm-pre-reloc;
++};
++
++&usb0 {
++    status = "okay";
++    dr_mode = "host";
++    usb-phy = <&usb_phy0>;
++    //pinctrl-names = "default";
++    //pinctrl-0 = <&pinctrl_usb0_default>;
++};
++
++&usb1 {
++    status = "okay";
++    dr_mode = "peripheral";
++    usb-phy = <&usb_phy1>;
++    //pinctrl-names = "default";
++    //pinctrl-0 = <&pinctrl_usb1_default>;
++};
++
++//FIXME: original device tree has SPI1 enabled
++//All the signal path devices are connected to this
++//Siglent uses a custom driver, most likely for all the Latch, CS etc. lines
++//&spi0 {
++//    status = "okay"
++//};
++
++//FIXME: original device tree has SPI1 enabled
++//Most likely the frontpanel LEDs are connected to this
++//Needs to be confirmed by looking at the scope app binary
++//&spi1 {
++//    status = "okay"
++//};
++
++//FIXME: SDHCI0 is enabled in original device tree
++//&sdhci0 {
++//    status = "okay";
++//};
++
++&smcc {
++    status = "okay";
++    u-boot,dm-pre-reloc;
++};
++
++&nand0 {
++    status = "okay";
++    u-boot,dm-pre-reloc;
++
++    arm,nand-cycle-t0 = <0x5>;
++    arm,nand-cycle-t1 = <0x5>;
++    arm,nand-cycle-t2 = <0x2>;
++    arm,nand-cycle-t3 = <0x3>;
++    arm,nand-cycle-t4 = <0x1>;
++    arm,nand-cycle-t5 = <0x2>;
++    arm,nand-cycle-t6 = <0x2>;
++
++    partition@nand-fsbl {
++        label = "fsbl";
++        reg = <0x0 0x780000>;
++    };
++    partition@nand-linux {
++        label = "kerneldata";
++        reg = <0x780000 0x400000>;
++    };
++    partition@nand-device-tree {
++        label = "device-tree";
++        reg = <0xb80000 0x80000>;
++    };
++    partition@nand-manufacturedata {
++        label = "Manufacturedata";
++        reg = <0xc00000 0x500000>;
++    };
++    partition@nand-reserved1 {
++        label = "reserved1";
++        reg = <0x1100000 0x500000>;
++    };
++    partition@nand-rootfs {
++        label = "rootfs";
++        reg = <0x1600000 0x1e00000>;
++    };
++    partition@nand-firmdata0 {
++        label = "firmdata0";
++        reg = <0x3400000 0xa00000>;
++    };
++    partition@nand-firmdata1 {
++        label = "firmdata1";
++        reg = <0x3e00000 0xa00000>;
++    };
++    partition@nand-siglent {
++        label = "siglent";
++        reg = <0x4800000 0x1400000>;
++    };
++    partition@nand-datafs {
++        label = "datafs";
++        reg = <0x5c00000 0x6400000>;
++    };
++    partition@nand-log {
++        label = "log";
++        reg = <0xc000000 0xa00000>;
++    };
++    partition@nand-upgrade_cramdisk {
++        label = "upgrade_cramdisk";
++        reg = <0xca00000 0x1e00000>;
++    };
++    partition@nand-reserved2 {
++        label = "reserved2";
++        reg = <0xe800000 0x1800000>;
++    };
++};
++
++//FIXME: configure pinctrl correctly
++//&pinctrl0 {
++//    pinctrl_usb0_default: usb0-default {
++//        mux {
++//            groups = "usb0_0_grp";
++//            function = "usb0";
++//        };
++//
++//        conf {
++//            groups = "usb0_0_grp";
++//            slew-rate = <0>;
++//            io-standard = <1>;
++//        };
++//
++//        conf-rx {
++//            pins = "MIO29", "MIO31", "MIO36";
++//            bias-high-impedance;
++//        };
++//
++//        conf-tx {
++//            pins = "MIO28", "MIO30", "MIO32", "MIO33", "MIO34",
++//                   "MIO35", "MIO37", "MIO38", "MIO39";
++//            bias-disable;
++//        };
++//    };
++//};
+diff --git a/configs/zynq_sds1202xe_defconfig b/configs/zynq_sds1202xe_defconfig
+new file mode 100644
+index 0000000000..58c443028b
+--- /dev/null
++++ b/configs/zynq_sds1202xe_defconfig
+@@ -0,0 +1,58 @@
++CONFIG_ARM=y
++CONFIG_ARCH_ZYNQ=y
++CONFIG_SYS_TEXT_BASE=0x4000000
++CONFIG_DEFAULT_DEVICE_TREE="zynq-sds1202xe"
++CONFIG_DEBUG_UART=y
++CONFIG_DISTRO_DEFAULTS=y
++CONFIG_FIT=y
++CONFIG_FIT_SIGNATURE=y
++CONFIG_FIT_VERBOSE=y
++CONFIG_NAND_BOOT=y
++CONFIG_BOOTCOMMAND="run $modeboot || run distro_bootcmd"
++# CONFIG_DISPLAY_CPUINFO is not set
++CONFIG_SYS_PROMPT="Zynq> "
++CONFIG_CMD_THOR_DOWNLOAD=y
++CONFIG_CMD_DFU=y
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_FPGA_LOADBP=y
++CONFIG_CMD_FPGA_LOADFS=y
++CONFIG_CMD_FPGA_LOADMK=y
++CONFIG_CMD_FPGA_LOADP=y
++CONFIG_CMD_GPIO=y
++CONFIG_CMD_USB=y
++CONFIG_CMD_USB_MASS_STORAGE=y
++# CONFIG_CMD_SETEXPR is not set
++CONFIG_CMD_TFTPPUT=y
++CONFIG_CMD_CACHE=y
++CONFIG_CMD_EXT4_WRITE=y
++CONFIG_OF_EMBED=y
++CONFIG_NET_RANDOM_ETHADDR=y
++CONFIG_SPL_DM_SEQ_ALIAS=y
++CONFIG_BLK=y
++CONFIG_DFU_NAND=y
++CONFIG_DFU_RAM=y
++CONFIG_FPGA_XILINX=y
++CONFIG_DM_GPIO=y
++# CONFIG_MMC is not set
++CONFIG_NAND=y
++CONFIG_NAND_ZYNQ=y
++CONFIG_NAND_ZYNQ_USE_BOOTLOADER1_TIMINGS=y
++CONFIG_PHY_TI=y
++CONFIG_ZYNQ_GEM=y
++CONFIG_SPL_DM_SERIAL=y
++CONFIG_DEBUG_UART_ZYNQ=y
++CONFIG_DEBUG_UART_BASE=0xe0001000
++CONFIG_DEBUG_UART_CLOCK=50000000
++CONFIG_ZYNQ_SERIAL=y
++CONFIG_USB=y
++CONFIG_USB_EHCI_HCD=y
++CONFIG_USB_ULPI_VIEWPORT=y
++CONFIG_USB_ULPI=y
++CONFIG_USB_STORAGE=y
++CONFIG_USB_GADGET=y
++CONFIG_USB_GADGET_MANUFACTURER="Xilinx"
++CONFIG_USB_GADGET_VENDOR_NUM=0x03fd
++CONFIG_USB_GADGET_PRODUCT_NUM=0x0300
++CONFIG_CI_UDC=y
++CONFIG_USB_GADGET_DOWNLOAD=y
++CONFIG_SPL_OF_LIBFDT=y
+diff --git a/include/configs/zynq-common.h b/include/configs/zynq-common.h
+index ee2a1c8350..acf01d7666 100644
+--- a/include/configs/zynq-common.h
++++ b/include/configs/zynq-common.h
+@@ -73,6 +73,7 @@
+ #define CONFIG_SYS_MAX_NAND_DEVICE	1
+ #define CONFIG_SYS_NAND_ONFI_DETECTION
+ #define CONFIG_MTD_DEVICE
++# define CONFIG_CMD_MTDPARTS
+ #endif
+ 
+ /* MMC */
+@@ -88,6 +89,7 @@
+ # define CONFIG_USB_CABLE_CHECK
+ # define CONFIG_THOR_RESET_OFF
+ # define CONFIG_USB_FUNCTION_THOR
++# define CONFIG_USB_FUNCTION_MASS_STORAGE
+ # define DFU_ALT_INFO_RAM \
+ 	"dfu_ram_info=" \
+ 	"set dfu_alt_info " \
+@@ -122,6 +124,25 @@
+ 
+ #if defined(CONFIG_MMC_SDHCI_ZYNQ) || defined(CONFIG_ZYNQ_USB)
+ # define CONFIG_SUPPORT_VFAT
++# define CONFIG_FAT_WRITE
++# define CONFIG_DOS_PARTITION
++#endif
++
++/* NAND SPL boot */
++/* FIXME: Doesn't build right now */
++/* Some example code: https://github.com/Elphel/ezynq/tree/master/u-boot-tree/drivers/mtd/nand */
++#ifdef CONFIG_SPL_NAND_SUPPORT
++# define CONFIG_SPL_NAND_DRIVERS
++# define CONFIG_SPL_NAND_INIT
++# define CONFIG_SPL_NAND_LOAD
++# define CONFIG_SPL_NAND_BASE
++# define CONFIG_SPL_NAND_ECC
++/* FIXME: If we ever do NAND booting on the SDS1202X-E, we need another partition
++   layout and enter the correct offset and size here to the main u-boot being loaded from the SPL u-boot */
++# define CONFIG_SYS_NAND_U_BOOT_OFFS 0x10000
++# define CONFIG_SYS_NAND_U_BOOT_SIZE (512 << 10)
++# define CONFIG_SYS_NAND_U_BOOT_DST CONFIG_SYS_TEXT_BASE
++# define CONFIG_SYS_NAND_U_BOOT_START CONFIG_SYS_NAND_U_BOOT_DST
+ #endif
+ 
+ #if defined(CONFIG_ZYNQ_I2C0) || defined(CONFIG_ZYNQ_I2C1)
+@@ -210,6 +231,7 @@
+ /* Default environment */
+ #ifndef CONFIG_EXTRA_ENV_SETTINGS
+ #define CONFIG_EXTRA_ENV_SETTINGS	\
++	"autoload=no\0" \
+ 	"ethaddr=00:0a:35:00:01:22\0"	\
+ 	"kernel_image=uImage\0"	\
+ 	"kernel_load_address=0x2080000\0" \
+@@ -286,10 +308,10 @@
+ 		"nand read ${ramdisk_load_address} 0x620000 ${ramdisk_size} && " \
+ 		"bootm ${kernel_load_address} ${ramdisk_load_address} ${devicetree_load_address}\0" \
+ 	"jtagboot=echo TFTPing Linux to RAM... && " \
++		"dhcp &&" \
+ 		"tftpboot ${kernel_load_address} ${kernel_image} && " \
+ 		"tftpboot ${devicetree_load_address} ${devicetree_image} && " \
+-		"tftpboot ${ramdisk_load_address} ${ramdisk_image} && " \
+-		"bootm ${kernel_load_address} ${ramdisk_load_address} ${devicetree_load_address}\0" \
++		"bootm ${kernel_load_address} - ${devicetree_load_address}\0" \
+ 	"rsa_norboot=echo Copying Image from NOR flash to RAM... && " \
+ 		"cp.b 0xE2100000 0x100000 ${boot_size} && " \
+ 		"zynqrsa 0x100000 && " \
