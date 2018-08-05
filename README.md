@@ -1,7 +1,7 @@
 360nosc0pe Yocto build environment
 ==================================
 
-This repo contains the Yocto Linux environment for the 360nosc0pe project which tries to build an open source oscilloscope FPGA design and software for Zynq based Oscilloscope like the Siglent SDS 1x0xX-E series.
+This repo contains the Yocto Linux environment for the 360nosc0pe project which tries to build an open source oscilloscope FPGA design and software for Xilinx Zynq based oscilloscopes like the Siglent SDS 1x0xX-E series.
 
 Supported machines:
 * Siglent SDS1202X-E
@@ -14,13 +14,13 @@ As userspace we use Arch Linux ARM which makes it easy to install packages on th
 Project status
 --------------
 
-The project is in a relatively development stage. So far we completed the following tasks:
+The project is in a relatively early development stage. So far we completed the following tasks:
 
-* Reverse engineer most of the pinout
+* Reverse engineering of most of the pinout
 * Get Linux booting
-* Get all peripherals working like USB, Ethernet, Serial port etc.
+* Get all usual peripherals working like USB, Ethernet, serial port etc.
 * Get a framebuffer working for the display
-* Establish SPI communication to the devices in the signal path
+* Establish SPI communication with the devices in the signal path
 * Build FPGA cores for the frontpanel input
 * Write some auxiliary linux drivers for the frontpanel LEDs, power management IC etc.
 * Build an FPGA core which performs the offset DAC multiplexing
@@ -38,6 +38,7 @@ Things that are left to do:
 * Proper python API to control the scope in a useful manner for automated tasks
 * Scope UI + software
 * Reverse engineering of the MSO dongle of the 4ch scope
+* Create a USB boot chain - the stock u-boot tried to load stuff from USB already, we need to reload the bitstream, reconfigure PLLs etc.
 
 Quick start
 -----------
